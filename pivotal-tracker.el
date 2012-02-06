@@ -43,7 +43,7 @@
   :group 'pivotal
   :type 'string)
 
-(defconst pivotal-base-url "http://www.pivotaltracker.com/services/v3"
+(defconst pivotal-base-url "https://www.pivotaltracker.com/services/v3"
   "format string to use when creating endpoint urls")
 
 (defconst pivotal-states `("unstarted" "started" "finished" "delivered" "accepted" "rejected")
@@ -351,6 +351,8 @@ Owned By:     %s
 %s
 --- Comments
 %s
+--- Tasks
+%s
 "
           (pivotal-story-attribute story 'name)
           (pivotal-story-attribute story 'story_type)
@@ -359,7 +361,8 @@ Owned By:     %s
           (pivotal-story-attribute story 'requested_by)
           (pivotal-story-attribute story 'owned_by)
           (pivotal-story-attribute story 'description)
-          (pivotal-comments story)))
+          (pivotal-comments story)
+          (pivotal-tasks story)))
 
 (defun pivotal-format-story-oneline (story)
   (let ((owner (pivotal-story-attribute story 'owned_by))
@@ -429,11 +432,26 @@ Owned By:     %s
             notes)
     comments))
 
+(defun pivotal-tasks (story)
+  (let ((task-elements (pivotal-xml-collection story `(tasks task)))
+        (tasks ""))
+    (mapcar (lambda (task-element)
+              (setq tasks (concat tasks (pivotal-format-task task-element))))
+            task-elements)
+    tasks))
+
 (defun pivotal-format-comment (note)
   (format "%s  --  %s at %s\n"
           (pivotal-element-value note 'text)
           (pivotal-element-value note 'author)
           (pivotal-element-value note 'noted_at)))
+
+(defun pivotal-format-task (task)
+  (format "%s - %s\n"
+          (if (equal "true" (pivotal-element-value task 'complete))
+              "[x]"
+            "[ ]")
+          (pivotal-element-value task 'description)))
 
 (provide 'pivotal-tracker)
 
