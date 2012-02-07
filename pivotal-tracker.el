@@ -154,6 +154,19 @@
                'pivotal-add-comment-callback
                (format "<note><text>%s</text></note>" (xml-escape-string comment))))
 
+(defun pivotal-toggle-task ()
+  (interactive)
+  (let* ((buf-point (point))
+         (story-id (get-text-property buf-point 'pivotal-story-id))
+         (task-id (get-text-property buf-point 'pivotal-task-id))
+         (task-state (get-text-property buf-point 'pivotal-task-completed)))
+    (if task-id
+        (pivotal-api (pivotal-url "projects" *pivotal-current-project* "stories" story-id "tasks" task-id)
+                     "PUT"
+                     'pivotal-toggle-task-callback
+                     (format "<task><complete>%s</complete></task>"
+                             (if (equal task-state "true") "false" "true")))
+      (message "No task under point"))))
 
 ;;;;;;;; CALLBACKS
 
@@ -188,6 +201,15 @@
         (pivotal-remove-story-at-point)
         (pivotal-insert-story xml)))))
 
+(defun pivotal-toggle-task-callback (status)
+  (let* ((xml (pivotal-get-xml-from-current-buffer))
+         (task (car xml))
+         (task-id (pivotal-element-value task 'id)))
+    (with-current-buffer (get-buffer-create "*pivotal-iteration*")
+      (message (concat "UPDATED TASK " task-id))
+      (pivotal-remove-task-at-point)
+      (pivotal-insert-task task))))
+
 (defun pivotal-add-comment-callback (status)
   (let* ((xml (pivotal-get-xml-from-current-buffer))
          (comment (pivotal-format-comment (car xml))))
@@ -199,7 +221,6 @@
                (car (last error)))
              (xml-get-children (car xml) 'error)
              " "))
-
 
 
 ;;;;;;;; MODE DEFINITIONS
@@ -227,6 +248,7 @@
   (define-key pivotal-mode-map (kbd "C") 'pivotal-add-comment)
   (define-key pivotal-mode-map (kbd "S") 'pivotal-set-status)
   (define-key pivotal-mode-map (kbd "L") 'pivotal)
+  (define-key pivotal-mode-map (kbd "SPC") 'pivotal-toggle-task)
   (setq font-lock-defaults '((pivotal-font-lock-keywords) nil t))
   (font-lock-mode))
 
@@ -242,9 +264,7 @@
   (define-key pivotal-project-mode-map (kbd ".") 'pivotal-set-project)
   (define-key pivotal-project-mode-map (kbd "C-m") 'pivotal-set-project))
 
-
 ;;;;;;;;; SUPPORTING FUNS
-
 
 (defun pivotal-url (&rest parts-of-url)
   (apply 'concat
@@ -294,6 +314,7 @@
          (_ (insert (pivotal-format-story-oneline story)))
          (end-of-oneline (point))
          (_ (insert (pivotal-format-story story)))
+         (_ (pivotal-insert-tasks story))
          (end-of-detail (point)))
     (pivotal-mark-story start-point end-of-detail (pivotal-story-attribute story 'id))
     (pivotal-mark-invisibility end-of-oneline end-of-detail)
@@ -311,11 +332,28 @@
       (pivotal-mark-story story-end new-end story-id)
       (pivotal-mark-invisibility story-end new-end))))
 
+(defun pivotal-insert-tasks (story)
+  (let ((tasks (pivotal-xml-collection story `(tasks task))))
+    (insert "--- Tasks\n")
+    (mapc 'pivotal-insert-task tasks)))
+
+(defun pivotal-insert-task (task)
+  (let* ((start-point (point))
+         (_ (insert (pivotal-format-task task)))
+         (end-point (point)))
+    (pivotal-mark-task start-point end-point
+                       (pivotal-element-value task 'id)
+                       (pivotal-element-value task 'complete))))
+
 (defun pivotal-invisibility-id (story-id)
   (intern (concat "pivotal-" story-id)))
 
 (defun pivotal-mark-story (min max story-id)
   (put-text-property min max 'pivotal-story-id story-id))
+
+(defun pivotal-mark-task (min max task-id completed)
+  (put-text-property min max 'pivotal-task-id task-id)
+  (put-text-property min max 'pivotal-task-completed completed))
 
 (defun pivotal-mark-invisibility (min max)
   (let ((overlay (make-overlay min max)))
@@ -351,8 +389,6 @@ Owned By:     %s
 %s
 --- Comments
 %s
---- Tasks
-%s
 "
           (pivotal-story-attribute story 'name)
           (pivotal-story-attribute story 'story_type)
@@ -361,8 +397,7 @@ Owned By:     %s
           (pivotal-story-attribute story 'requested_by)
           (pivotal-story-attribute story 'owned_by)
           (pivotal-story-attribute story 'description)
-          (pivotal-comments story)
-          (pivotal-tasks story)))
+          (pivotal-comments story)))
 
 (defun pivotal-format-story-oneline (story)
   (let ((owner (pivotal-story-attribute story 'owned_by))
@@ -399,6 +434,32 @@ Owned By:     %s
 (defun pivotal-extract-stories-from-iteration-xml (iteration-xml)
   (pivotal-xml-collection (car iteration-xml) `(iteration stories story)))
 
+(defun pivotal-remove-task-at-point ()
+  (interactive)
+  (beginning-of-line)
+  (kill-line)
+  (kill-line))
+  ;; (let* ((bounds (pivotal-task-boundaries (point)))
+  ;;        (first-point (first bounds))
+  ;;        (last-point (second bounds)))
+  ;;   (delete-region first-point (+ last-point 1))
+  ;;   (beginning-of-line)))
+
+(defun pivotal-task-boundaries (point)
+  (let ((task-id (get-text-property (point) 'pivotal-task-id))
+        (first-point (point))
+        (last-point (point)))
+    (while (pivotal-point-has-task-id (- first-point 1) task-id)
+      (setq first-point (- first-point 1)))
+    (while (pivotal-point-has-task-id (+ last-point 1) task-id)
+      (setq last-point (+ last-point 1)))
+    (list first-point last-point)))
+
+(defun pivotal-point-has-task-id (point task-id)
+  (if (and (<= point (point-max)) (>= point (point-min)))
+      (string-equal (get-text-property point 'pivotal-task-id) task-id)
+    nil))
+
 (defun pivotal-story-attribute (xml attribute)
   (let*
       ((story (if (eq 'story (car xml))
@@ -431,14 +492,6 @@ Owned By:     %s
               (setq comments (concat comments (pivotal-format-comment note))))
             notes)
     comments))
-
-(defun pivotal-tasks (story)
-  (let ((task-elements (pivotal-xml-collection story `(tasks task)))
-        (tasks ""))
-    (mapcar (lambda (task-element)
-              (setq tasks (concat tasks (pivotal-format-task task-element))))
-            task-elements)
-    tasks))
 
 (defun pivotal-format-comment (note)
   (format "%s  --  %s at %s\n"
