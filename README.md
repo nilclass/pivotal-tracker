@@ -32,6 +32,7 @@ web application. Once you have the key, customize it.
 **  example: pressing '2' followed by pressing 'E' will assign a 2 pt estimate for current story
 * 'C' will prompt for a new comment
 * 'S' will prompt for new status
+* SPC will toggle the task's completed state, if point is currently on a task
 
 ## Issues & Feature Requests
 
